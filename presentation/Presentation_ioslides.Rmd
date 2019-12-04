@@ -1,0 +1,294 @@
+---
+title: "SPPH 501 Term Project: Shared Frailty Models for Recurrent Events and a Terminal Event"
+subtitle: "An Application to Severe Acute Exacerbation of Chronic Obstructive Pulmonary Disease (COPD)"
+author: "Tae Yoon (Harry) Lee"
+date: "Nov 18, 2019"
+output: ioslides_presentation
+widescreen: true
+smaller: true
+bibliography: Exacerbation_Inference.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(knitr)
+options(knitr.kable.NA = '')
+library(png)
+library(xtable)
+library(grid)
+library(tidyverse)
+library(pander)
+copd_visual <- read_rds('SPPH501_copd_corrected.rds')
+copd_summary_stats <- copd_visual
+copd_summary_stats[,c(22,23,30:32)]  <- lapply(copd_summary_stats[,c(22,23,30:32)],as.factor)
+library(reReg)
+reObj <- with(copd_visual, Recur(time=event_time, id=ID, event=recurrent_event,death))
+load('result_analysis.RData')
+```
+
+## Motivation
+
+- Does severe asthma exacerbation have any effect on subsequent severe asthma exacerbations and mortality?
+- This question with COPD has been studied recently [@suissa_long-term_2012] with an approporiate method [@sadatsafavi_association_2018].
+- The purpose of my term project is to understand the methodology used in @sadatsafavi_association_2018, and apply it to available datasets, which are clinical datasets on COPD.
+
+## Outline
+1. COPD datasets
+2. Recurrent events and a terminal event
+3. Covariates
+4. Joint/shared frailty model
+5. Results
+
+## What is Chronic Obstructive Pulmonary Disease (COPD)?
+- COPD is characterized by coughing and shortness of breath, usually caused by two mechanisms: 1) damaged alveoli 2) damaged bronchial tubes.
+- An excerbation is a sudden worsening or flare-up of the COPD symtoms. It could take a month or longer to recover completely from it.
+```{r, out.width = "400px",fig.align='center'}
+knitr::include_graphics("fig/copd.png")
+```
+[@noauthor_copd_nodate]
+
+## MACRO and OPTIMAL Clinical Datasets
+ - The data is composed of two _randomized_ clinical datasets: MACRO [@albert_azithromycin_2011] and OPTIMAL [@aaron_tiotropium_2007].
+ - For each trial, there is a control group (placebo) and treatment groups (drugs).
+ - The response variable in these studies is the exacerbation rate, defined as the number of COPD exacerbations per year. Note that there are different levels of COPD excerbation (mild and severe).
+ - The purpose of these studies is to investigate the effects of drugs on excerbation rate.
+
+##  
+```{r,out.width = "500px",out.height="620px",fig.align='center'}
+knitr::include_graphics("fig/macro.png")
+```
+
+##
+```{r,out.width = "500px",out.height="620px",fig.align='center'}
+knitr::include_graphics("fig/optimal.png")
+```
+
+## Recurrent Events and a Terminal Event
+- Only 311 out of 1521 patients had at least one severe COPD exacerbation during the sutdy
+- 70 patients died
+```{r,echo = F}
+print(summary(copd_summary_stats[,30:32]))
+```
+
+##
+```{r,echo=F,fig.align='center'}
+plot(reObj,cex=2,xlab= 'Days from randomization', ylab='Patients',
+     main= '',
+     terminal.name='Death',
+     recurrent.name = 'Severe COPD Exacerbation')
+```
+
+## By Gender (1:Female, 2:Male)
+```{r,echo=F,fig.align='center'}
+plotEvents(reObj ~ gender, data = copd_visual,
+           main='',
+           cex=2,xlab= 'Days from randomization', ylab='Patients',
+           terminal.name='Death',
+           recurrent.name = 'Severe COPD Exacerbation')
+```
+
+## By Treatment Group (1:Placebo, 2: Drug A , 3: Drug B)
+```{r,echo=F,fig.align='center'}
+plotEvents(reObj ~ trtgroup, data = copd_visual,
+           main='',
+           cex=2,xlab= 'Days from randomization', ylab='Patients',
+           terminal.name='Death',
+           recurrent.name = 'Severe COPD Exacerbation')
+```
+
+## Cumulative Sample Mean (CSM) 
+CSM(t)=$\frac{1}{n}\sum_{i=1}^n N_i(t),$ where $N_i(t)=$# of events of interest over the time interval $[0,t]$ for patient $i$ [@cook_statistical_2007].
+```{r,echo=F,fig.align='center'}
+plotCSM(reObj~ trtgroup, data = copd_visual, main = "",
+        xlab='Days from randomization',
+        ylab='Cumulative sample mean',
+        adjrisk = F,
+        confint=T)
+```
+
+## Baseline Covariates
+```{r basic,echo=F,fig.align='center'}
+kable(summary(copd_summary_stats[,1:7] %>% distinct())[-7,-1]) 
+```
+
+##  Lung-related Covariates
+```{r lung,echo=F}
+kable(summary(copd_summary_stats[,c(1,8,9,11:13,17)] %>% distinct())[-7,-1])
+```
+
+## Randomization Dates
+```{r,echo=F}
+summary(copd_summary_stats[,c(1,18:21)] %>% distinct())[,-1] # randomization date
+```
+
+## 
+- Severe COPD exacerbation dates:
+```{r,echo=F}
+summary((copd_summary_stats %>% filter(recurrent_event==1))[,26:27]) # re event
+```
+- Death dates:
+```{r,echo=F}
+summary((copd_summary_stats %>% filter(death==1))[,26:27]) # death event
+```
+
+## Number of Previous Severe COPD Exacerbations
+```{r,echo=F,fig.align='center'}
+ggplot(data=copd_visual %>% 
+         filter(recurrent_event==1) %>%
+         mutate(num_recurrent_events=ifelse(num_recurrent_events>3,3,num_recurrent_events)) %>% 
+         mutate(num_recurrent_events=as.factor(num_recurrent_events)),
+       aes(x=gaptime,colour=num_recurrent_events)) +
+  geom_density() +
+  xlab('(gap)time to get a subsequent severe COPD exacerbation (days)')
+```
+
+## 
+```{r,echo=F,fig.align='center'}
+ggplot(data=copd_visual %>%
+         mutate(num_recurrent_events=ifelse(num_recurrent_events>3,3,num_recurrent_events)) %>% 
+         mutate(num_recurrent_events=as.factor(num_recurrent_events)) %>% 
+         filter(death==1),aes(y=gaptime,x=num_recurrent_events)) +
+  geom_boxplot() +
+  ylab("time to death since randomization (days)") +
+  xlab("number of previous severe COPD exacerbations (since randomization)")
+```
+
+## Why Joint Modeling?
+- We see that the follow-up of the patients was terminated by death, meaning that any subsequent severe COPD exacerbation cannot occur. 
+- The exploratory data analysis shows that death could be __correlated__ with severe COPD exacerbations; the recurrence of severe COPD exacerbations could increase the risk of death.
+<!-- - For patient $i$, let $Y_ij$ be the $j$th recurrent time ($j=1,\dots,n_i$), $C_i$ be censoring times and $D_i$ be the death time. -->
+<!-- - Let $T_{ij}=\min\{Y_{ij},C_i,D_i \}, ~ \delta_{ij}=\mathbb{1}[Y_{ij}=T_{ij}], T_i^* = \min\{C_i,D_i\}, \delta^*_i= 1[T_i^* = D_i]$. -->
+<!-- - We have two processes $\{T_{ij}\}$ and $\{D_i\}$. -->
+- Joint/shared frailty (random effects) models allow one to study the two processes together.
+
+## Frailty Models
+- Proportional Cox hazard models are frailty models without random effects:
+$$\lambda_{ij}(t)= \lambda_0(t) \exp(\beta^T X_{ij}),$$
+where $\lambda_0(\cdot)$ is the baseline hazard function.
+
+- Adding random effects, you get a (gamma) frailty model:
+$$\lambda_{ij}(t|v_i)= \lambda_0(t) \exp(\beta^T X_{ij}+\log(v_i)),$$
+where $v_i \sim^d \Gamma(1/\theta,1/\theta)$ are i.i.d. Note that that $E(v_i)=1$ and $Var(v_i)=\theta$.
+
+- Under this specification, the likelihood has an analytical form [@cook_statistical_2007].
+
+## Joint/shared Frailty models
+- A joint frailty model of the recurrent events (RE) and a terminal event is characterized by two hazard functions:
+$$\mbox{(RE) } r_{ij}(s|v_i) = v_i r_0(s) \exp(\beta_r^T X_{ij})$$
+and
+$$ \mbox{(death) }  \lambda_{i}(t|v_i) = v_i^\alpha \lambda_0(t) \exp(\beta_d^T X_{i}), ~\alpha \geq 0.$$
+- $s$ is the gaptime; $s_{ij}=T_{ij}-T_{i(j-1)}, T_{i0}=0$ for patient $i$ and $j$th gaptime.
+- Notice that the frailty term, $v_i$, is __shared__ by the two processes. 
+
+## Meaning of the frailty term
+- The dependence in this model is characterized by $(\alpha,\theta)$. 
+- Suppose $\theta$ is not null (if it is, then two processes are independent and $\alpha$ has no meaning).
+- If $\alpha=0$, then there is no dependence attributable to unobserved covariates (i.e. no depedence given observed covariates).
+- If $\alpha>0$, then $\theta$ not only accounts for heterogeniety in patients but describes the dependence (attributable to unobserved covariates) between the two processes through $\alpha$.
+
+## Choice of Baseline Hazard Functions and $v_i$
+- There are many choices available for frailty models but not so many for shared frailty models. Likelihood of the shared fraitly models does not have an analytical form.
+- I experimented with several _packages_ in __R__ and __SAS__; they have different estimation methods.
+- For joint frailty models, I tried _frailtypack_ [@rondeau_joint_2007] in __R__ and the approach using _NLMIXED_ in __SAS__ by @liu_use_2008 (this is the approach taken by @sadatsafavi_association_2018).
+- @rondeau_joint_2007 proposed a numerical method for frailty and shared frailty models with nonparametric hazard functions (using splines) with the gamma frailty.
+- @liu_use_2008 proposed the use of Gaussian quadrature for parametric (standard Weibull) and piece-wise hazard functions in frailty and shared frailty models. In this framework, $v_i$ can chosen more flexibly (through transformation techniques). I used Normal(0,$\sigma^2$) in addition to the standard gamma frailty.
+
+##
+- To check the validity of those two methods , I also used _parfm_ [@munda2012parfm] in __R__ for parametric hazard functions (Weibull) with the gamma frailty in simple frailty models.
+- Note that for parametric hazard functions, using the gamma frailty leads to an analytical form of the likelihood [@cook_statistical_2007]; standard optimzation techniques can be used to estimate the parameters.
+- I ran into errors when I used _frailtypack_ for shared frailty models... It has many practical barriers.
+
+## SAS Code
+```{r,echo=T,evaluate=F}
+# PROC NLMIXED DATA=WORK.copd GCONV=0 QPOINTS=6 GTOL=1E-8 COV CORR;
+# 	PARMS /* Initial values for the parameters */
+# 	lin=b_0+...+b_p X_p + z;
+# 	alpha=EXP(lin);
+# 	S_t=exp(-(alpha*gaptime)**EXP(ln_gamma));
+# 	h=EXP(ln_gamma)*alpha*((gaptime*alpha)**(EXP(ln_gamma)-1));
+# 	ll1=(recurrent_event~=1)*log(S_t)+(recurrent_event=1)*log(h*S_t);
+# 	lin_d=b_d_0 +	... + d_q X_q + z/kinv;
+# 	alpha_d=EXP(lin_d);
+# 	S_t_d=exp(-(alpha_d*gaptime)**EXP(ln_gamma_d));
+# 	h_d=EXP(ln_gamma_d)*alpha_d*((gaptime*alpha_d)**(EXP(ln_gamma_d)-1));
+# 	ll2=(death~=1)*log(S_t_d)+(death=1)*log(h_d*S_t_d);
+# 	ll=ll1+ll2;
+# 	MODEL gaptime~general(ll);
+# 	RANDOM z~NORMAL(0,EXP(ln_v)) SUBJECT=ID;
+```
+
+## RE Frailty Model: Paramter Estimates
+```{r,echo=F,fig.align='center',fig.width=10}
+p.re
+```
+
+## RE Frailty Model: Frailty Estimates
+```{r,echo=F,results='asis'}
+print(xtable::xtable(frailty.re),type='html',
+      include.rownames = F)
+```
+
+## Death Frailty Model: Parameter Estimates
+```{r,echo=F,fig.align='center',fig.width=10}
+p.death
+```
+
+## Death Fraiilty Model: Frailty Estimates
+```{r,echo=F,results='asis'}
+print(xtable::xtable(frailty.death),type='html',
+      include.rownames = F)
+```
+
+## Joint Frailty Model: RE Parameter Estimates
+```{r,echo=F,fig.align='center',fig.width=10}
+p.re.joint
+```
+
+## Joint Frailty Model: Death Parameter Estimates
+```{r,echo=F,fig.align='center',fig.width=10}
+p.death.joint
+```
+
+## Joint Frailty Model: Frailty Estimates
+```{r,echo=F, results='asis'}
+frailty.joint$Label[1] <- "$\\alpha$"
+frailty.joint$Label[2] <- "$\\sigma^2$"
+
+rownames(frailty.joint) <- c()
+print(xtable::xtable(frailty.joint), sanitize.colnames.function = identity,type='html',
+      include.rownames = F)
+```
+
+## Association of Severe COPD exacerbation on the risk of its subsequent one
+```{r,echo=F,include=F}
+tmp <- read_csv("Nov_corrected/__JOINT_ADDITIONAL.csv")
+tmp <- tmp[37:42,]
+tmp <- cbind(exp(tmp$Estimate),exp(tmp$Estimate-tmp$StandardError*(1-0.05/2)),
+      exp(tmp$Estimate+tmp$StandardError*(1-0.05/2))) %>% as.data.frame()
+colnames(tmp) <- c("Estimate","Lower","Upper")
+rownames(tmp) <- c("RE_1st","RE_2nd","RE_3rd",
+                   "Death_1st","Death_2nd","Death_3rd")
+tmp$Type <- c(rep("RE",3),rep("Death",3))
+tmp$Variable <- rep(c('1st','2nd','3rd'),2)
+pp <- ggplot(tmp, 
+       aes(Estimate,Variable,xmax=Upper,xmin=Lower,colour=Type)) + 
+  coord_cartesian(xlim=c(0,10 )) +
+  #scale_alpha_discrete(range = c(0.2, 1)) +
+  geom_vline(xintercept = 1.0, linetype=2, alpha=0.75) +
+  geom_errorbarh(alpha=0.5, color='black') + 
+  # geom_point(aes(size = RelConf)) +
+  geom_point(aes(Estimate),size=3)+
+  # geom_point(data = subset(remresdf, Study=="RE Model"), size=7) +
+  scale_size(range = c(2, 5), guide=FALSE) +
+  theme_bw() + 
+  theme(text = element_text(size=16))+
+  ylab("") +
+  xlab("HR") + coord_flip()
+```
+
+```{r,echo=F,warning=F,fig.align='center'}
+pp
+```
+
+## References
+

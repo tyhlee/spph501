@@ -1,0 +1,284 @@
+---
+title: "JointFrailtyModel"
+author: "Tae Yoon Lee"
+date: "24/10/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# modeling
+library(tidyverse)
+library(ggplot2)
+library(frailtypack)
+select <- dplyr::select
+copd <- read_rds('SPPH501_copd.rds')
+baseline.covariates <- c('trtgroup','age','gender','packyears','BMI',
+                         'fev1','fev1pp', 'fev1fvcratio','fvc', 'stgtotalc00',
+                         'nowsmk','oxygen','sgrq',
+                         'OPTIMAL',
+                         'rand_month','rand_season','rand_seasonality')
+
+# perform some preprocessing
+copd <- copd %>% 
+  mutate(stgtotalc00 = stgtotalc00/100,
+         fev1pp = fev1pp/100,
+         sgrq = sgrq / 100) %>% 
+  mutate(packyears = ifelse(packyears > age, packyears/12,packyears)) %>% 
+  mutate(packyears= ifelse(age-packyears < 18, packyears/12,packyears)) %>% 
+  mutate(packyears = packyears/100) %>% 
+  mutate(BMI = BMI / 100)
+
+# copd %>% 
+#   distinct(ID,.keep_all = T) %>% 
+#   select(age,packyears) %>% 
+#   mutate(diff = age - packyears) ->look
+# 
+# plot(look$age,look$packyears)
+# abline(0,1)
+# hist(look$diff)
+
+# time-varying covariates
+timevarying.covariates <- c('tte0','num_recurrent_events','event_season','event_seasonality')
+
+paste(c(baseline.covariates,timevarying.covariates),collapse='+')
+
+#toy example
+# data("readmission")
+# readmission %>% glimpse()
+# #-- Gap-time
+# mod.sha.gap <- frailtyPenal(Surv(time, event) ~ cluster(id) + dukes +
+#
+#                               charlson + sex + chemo, n.knots = 9, kappa = 1,
+#
+#                               data = readmission, cross.validation = TRUE)
+# mod.sha.gap$kappa/1e10
+#
+# plot(mod.sha.gap)
+
+# modJoint.gap <- frailtyPenal(Surv(time,event)~cluster(id)+sex+dukes+charlson+
+#                                terminal(death),formula.terminalEvent=~sex+dukes+charlson,
+#                              data=readmission,n.knots=14,kappa=c(9.55e+9,1.41e+12),
+#                              recurrentAG=FALSE,jointGeneral = T)
+# 
+# modJoint.gap2 <- frailtyPenal(Surv(time,event)~cluster(id)+sex+dukes+charlson+
+#                                terminal(death),formula.terminalEvent=~sex+dukes+charlson,
+#                              data=readmission,n.knots=10,kappa=c(9.55e+9,1.41e+12),
+#                              recurrentAG=FALSE,jointGeneral = T)
+# write_rds(copd,'copd_modeling.rds')
+```
+
+```{r, include=F}
+library(tidyverse)
+library(frailtypack)
+select <- dplyr::select
+copd <- read_rds('copd_modeling.rds') %>% 
+  dplyr::filter(!(ID %in%  c('C100420-MACRO',' 2005-OPTIM'))) %>% 
+  # mutate(death = ifelse(death==1 & event_time==365, 0, death)) %>%
+  mutate(recurrent_event = ifelse(event==0,0,recurrent_event))
+
+# copd %>% 
+#   filter(event_time==365 & death == 1) %>% View()
+# 
+# copd %>% 
+#   filter(event!=0 & death == 1) 
+
+# copd %>% dim()
+# copd %>% filter(OPTIMAL==1) %>% dim()
+# 
+# rand.ID <- sample(unique(copd$ID),800)
+# copd %>% 
+#   filter(ID %in% rand.ID & death==1)
+# copd %>% 
+#   filter(ID %in% rand.ID) %>% 
+#   dim()
+# 
+
+# copd.macro <- copd %>% 
+#   filter(OPTIMAL != 1)
+# 
+# copd.optimal <- copd %>%
+#   filter(OPTIMAL==1) %>%
+#   dplyr::select(-OPTIMAL)
+
+
+# use a shared frailty model on each of the processes to obtain a reasonable estimate
+# of the smoothing parameters
+# macro.ids <- unique(copd.macro$ID)
+# max.period
+# set.seed(2)
+# 
+# tmp <- copd.macro %>%
+#   filter(ID %in% sample(macro.ids,400)) 
+# summary(tmp)
+# table(tmp$period)
+# 
+# tmp.ids <- unique(tmp$ID)
+# 
+# save.image('tmp.RData')
+# load('tmp.RData')
+```
+Here is the summary statistics of the data (COPD trial dataset in Canada).
+```{r}
+summary(copd %>% select(-ID))
+```
+
+Here is an event plot. There are 1521 patients in the data and 70 of them died during the trial.
+```{r eventplot}
+library(reReg)
+reObj <- with(copd,reReg::reSurv(time1 = event_time,id = ID,event = recurrent_event,status=death))
+plot(reObj,cex=1.5,xlab= 'Time in days', ylab='Patients',
+     main= 'Event plot',
+     terminal.name='Death',
+     recurrent.name = 'Severe COPD exacerbation')
+# plotEvents(reObj~gender,cex=1.5,xlab= 'Time in days', ylab='Patients',
+#            main= 'Event plot',
+#            terminal.name='Death',
+#            recurrent.name = 'Hospital readmission',
+#            data=copd)
+# plotCSM(reObj~1,data=copd,adjrisk = F)
+# plotCSM(reObj~1,data=copd)
+```
+Fit shared frailty models to obtain initial estimates of the regression coefficients and values of the smoothing paramters for a joint frailty model.
+```{r sharedfrailty}
+sha.gap <- frailtyPenal(Surv(gaptime,recurrent_event) ~ cluster(ID)+ 
+                          trtgroup +
+                          age +
+                          gender +
+                          packyears +
+                          BMI +
+                          # fev1+
+                          fev1pp+
+                          fev1fvcratio+
+                          # fvc+
+                          # stgtotalc00+
+                          nowsmk+
+                          oxygen+
+                          # sgrq+
+                          OPTIMAL+
+                          # rand_month+
+                          rand_season+
+                          # rand_seasonality +
+                          tte0+
+                          num_recurrent_events+
+                          event_season,
+                          # event_seasonality,
+                        data=copd,
+                        n.knots = 11,
+                        kappa=  1,
+                        cross.validation = T,
+                        maxit = 1000)
+print(sha.gap)
+plot(sha.gap)
+
+sha.death <- frailtyPenal(Surv(time = gaptime,event=death) ~ cluster(ID)+ 
+                            trtgroup +
+                            age + 
+                            gender +
+                            packyears +
+                            BMI +
+                            # fev1+
+                            fev1pp+
+                            fev1fvcratio+
+                            # fvc+
+                            # stgtotalc00+
+                            nowsmk+
+                            oxygen+
+                            # sgrq+
+                            OPTIMAL+
+                            # rand_month+
+                            rand_season+
+                            # rand_seasonality +
+                            tte0+
+                            num_recurrent_events,
+                          # event_season,
+                          # event_seasonality,
+                          data=copd,
+                          n.knots = 11,
+                          kappa= 1,
+                          cross.validation = T,
+                          maxit = 1000)
+print(sha.death)
+plot(sha.death)
+```
+
+```{r,include=F}
+# copd.ids <- unique(copd$ID)
+# death.ids <- copd %>% filter(death==1) %>% dplyr::select(ID) %>% unlist() %>% as.vector()
+# set.seed(2)
+# tmp <- copd %>%
+#   filter(max_period !=1) %>% 
+#   filter(ID %in% c(sample(copd.ids,500),death.ids)) %>% 
+#   mutate(id=ID)
+
+# data("readmission")
+# glimpse(readmission) %>% View()
+# readmission %>% 
+#   group_by(id) %>% 
+#   tally() -> look
+# table(look$n)
+# 
+# tmp %>% dplyr::select(ID,period,event_time,gaptime,death,recurrent_event) %>% View()
+# library(haven)
+# macro <- read_sas("Data/MACRO/Macro.sas7bdat")
+# macro %>% 
+#   filter(ID %in% 'I101279')
+```
+
+```{r jointfrailty}
+joint.frailty <- frailtyPenal(formula = Surv(time=gaptime,event=recurrent_event) ~ cluster(ID)+ 
+                                trtgroup +
+                                age +
+                                gender +
+                                packyears +
+                                BMI +
+                                # fev1+
+                                fev1pp+
+                                fev1fvcratio+
+                                # fvc+
+                                # stgtotalc00+
+                                nowsmk+
+                                oxygen+
+                                # sgrq+
+                                OPTIMAL+
+                                # rand_month+
+                                rand_season+
+                                # rand_seasonality +
+                                tte0+
+                                num_recurrent_events+
+                                event_season+
+                              # event_seasonality,
+                                terminal(death),
+                              formula.terminalEvent = ~
+                                trtgroup +
+                                age + 
+                                gender +
+                                packyears +
+                                BMI +
+                                # fev1+
+                                fev1pp+
+                                fev1fvcratio+
+                                # fvc+
+                                # stgtotalc00+
+                                nowsmk+
+                                oxygen+
+                                # sgrq+
+                                OPTIMAL+
+                                # rand_month+
+                                rand_season+
+                                # rand_seasonality +
+                                tte0+
+                                num_recurrent_events,
+                              # event_season,
+                              # event_seasonality,
+                              data=copd,
+                              n.knots = 11,
+                              init.B=c(sha.gap$coef,sha.death$coef),
+                              # kappa=c(1000,1000),
+                              # kappa=c(1,1),
+                              kappa=c(sha.gap$kappa,sha.death$kappa),
+                              jointGeneral = FALSE,
+                              recurrentAG=FALSE, # gap-time
+                              maxit=250)
+print(joint.frailty)
+plot(joint.frailty)
+```
